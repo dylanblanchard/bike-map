@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GPX Route Visualizer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .subtitle {
+      color: #666;
+      font-size: 0.95rem;
+      margin-bottom: 1.5rem;
+    }
+
+    /* Drop zone */
+    .drop-zone {
+      border: 2px dashed #ccc;
+      border-radius: 8px;
+      padding: 2.5rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      background: #fff;
+      margin-bottom: 1.5rem;
+    }
+
+    .drop-zone.drag-over {
+      border-color: #377eb8;
+      background: #eef4fb;
+    }
+
+    .drop-zone p {
+      margin-bottom: 0.5rem;
+      color: #555;
+    }
+
+    .drop-zone .browse {
+      color: #377eb8;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    .drop-zone .hint {
+      font-size: 0.8rem;
+      color: #999;
+    }
+
+    /* Status / file list */
+    .status {
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+
+    .status .error {
+      color: #c0392b;
+    }
+
+    .status .info {
+      color: #555;
+    }
+
+    .day-list {
+      list-style: none;
+      margin-bottom: 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem 1rem;
+    }
+
+    .day-list li {
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .color-dot {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* Map */
+    #preview-map {
+      width: 100%;
+      height: 500px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      margin-bottom: 1.5rem;
+      display: none;
+    }
+
+    /* Output */
+    .output-section {
+      display: none;
+      margin-bottom: 2rem;
+    }
+
+    .output-section h2 {
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .output-section p {
+      font-size: 0.85rem;
+      color: #666;
+      margin-bottom: 0.5rem;
+    }
+
+    .snippet-wrapper {
+      position: relative;
+    }
+
+    textarea.snippet {
+      width: 100%;
+      height: 200px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.8rem;
+      padding: 0.75rem;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      background: #fff;
+      resize: vertical;
+    }
+
+    .copy-btn {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      padding: 0.35rem 0.75rem;
+      font-size: 0.8rem;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: #fff;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .copy-btn:hover { background: #eee; }
+    .copy-btn.copied { background: #27ae60; color: #fff; border-color: #27ae60; }
+
+    /* Reset button */
+    .reset-btn {
+      padding: 0.4rem 1rem;
+      font-size: 0.85rem;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: #fff;
+      cursor: pointer;
+      margin-bottom: 1.5rem;
+      display: none;
+    }
+
+    .reset-btn:hover { background: #eee; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>GPX Route Visualizer</h1>
+  <p class="subtitle">Upload GPX files from a multi-day adventure to generate an embeddable route map.</p>
+
+  <div class="drop-zone" id="dropZone">
+    <p>Drag &amp; drop your .gpx files here</p>
+    <p>or <span class="browse" id="browseBtn">browse files</span></p>
+    <p class="hint">One file per day &middot; Files are sorted by timestamp automatically</p>
+    <input type="file" id="fileInput" multiple accept=".gpx" hidden />
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <button class="reset-btn" id="resetBtn">Clear &amp; start over</button>
+
+  <ul class="day-list" id="dayList"></ul>
+
+  <div id="preview-map"></div>
+
+  <div class="output-section" id="outputSection">
+    <h2>Embed snippet</h2>
+    <p>Copy this HTML and paste it into your blog post.</p>
+    <div class="snippet-wrapper">
+      <textarea class="snippet" id="snippet" readonly></textarea>
+      <button class="copy-btn" id="copyBtn">Copy</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/@mapbox/togeojson@0.12.4/togeojson.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  // --- Constants ---
+  const COLORS = ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#a65628"];
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+  const LINE_WEIGHT = 3;
+
+  // --- DOM refs ---
+  const dropZone = document.getElementById("dropZone");
+  const fileInput = document.getElementById("fileInput");
+  const browseBtn = document.getElementById("browseBtn");
+  const statusEl = document.getElementById("status");
+  const dayListEl = document.getElementById("dayList");
+  const previewMapEl = document.getElementById("preview-map");
+  const outputSection = document.getElementById("outputSection");
+  const snippetEl = document.getElementById("snippet");
+  const copyBtn = document.getElementById("copyBtn");
+  const resetBtn = document.getElementById("resetBtn");
+
+  let previewMap = null;
+  let mapLayers = [];
+
+  // --- File upload handling ---
+  browseBtn.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => handleFiles(fileInput.files));
+
+  dropZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropZone.classList.add("drag-over");
+  });
+  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+  dropZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropZone.classList.remove("drag-over");
+    handleFiles(e.dataTransfer.files);
+  });
+
+  resetBtn.addEventListener("click", resetApp);
+
+  copyBtn.addEventListener("click", () => {
+    snippetEl.select();
+    navigator.clipboard.writeText(snippetEl.value).then(() => {
+      copyBtn.textContent = "Copied!";
+      copyBtn.classList.add("copied");
+      setTimeout(() => {
+        copyBtn.textContent = "Copy";
+        copyBtn.classList.remove("copied");
+      }, 2000);
+    });
+  });
+
+  // --- Main processing ---
+  function handleFiles(fileList) {
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
+
+    // Validate extensions and size
+    const invalid = files.filter((f) => !f.name.toLowerCase().endsWith(".gpx"));
+    if (invalid.length > 0) {
+      showStatus(`Skipped non-GPX files: ${invalid.map((f) => f.name).join(", ")}`, "error");
+    }
+
+    const gpxFiles = files.filter((f) => f.name.toLowerCase().endsWith(".gpx"));
+    if (gpxFiles.length === 0) {
+      showStatus("No valid .gpx files found. Please upload .gpx files.", "error");
+      return;
+    }
+
+    const oversized = gpxFiles.filter((f) => f.size > MAX_FILE_SIZE);
+    if (oversized.length > 0) {
+      showStatus(`Files over 10 MB limit: ${oversized.map((f) => f.name).join(", ")}`, "error");
+      return;
+    }
+
+    showStatus(`Processing ${gpxFiles.length} file${gpxFiles.length > 1 ? "s" : ""}...`, "info");
+
+    // Read all files
+    Promise.all(gpxFiles.map(readFile))
+      .then((results) => processGpxData(results))
+      .catch((err) => showStatus("Error reading files: " + err.message, "error"));
+  }
+
+  function readFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ name: file.name, text: reader.result });
+      reader.onerror = () => reject(new Error("Failed to read " + file.name));
+      reader.readAsText(file);
+    });
+  }
+
+  function processGpxData(files) {
+    const parsed = [];
+    const errors = [];
+
+    for (const file of files) {
+      try {
+        const dom = new DOMParser().parseFromString(file.text, "application/xml");
+        const parseError = dom.querySelector("parsererror");
+        if (parseError) {
+          errors.push(file.name + " (invalid XML)");
+          continue;
+        }
+
+        const geojson = toGeoJSON.gpx(dom);
+        if (!geojson.features || geojson.features.length === 0) {
+          errors.push(file.name + " (no track data)");
+          continue;
+        }
+
+        // Extract first timestamp from coordinates
+        const timestamp = extractFirstTimestamp(dom);
+        parsed.push({ name: file.name, geojson, timestamp });
+      } catch (e) {
+        errors.push(file.name + " (" + e.message + ")");
+      }
+    }
+
+    if (errors.length > 0) {
+      showStatus("Could not parse: " + errors.join(", "), "error");
+    }
+
+    if (parsed.length === 0) {
+      showStatus("No valid GPX data found in uploaded files.", "error");
+      return;
+    }
+
+    // Sort: by timestamp if all have one, otherwise alphabetically by filename
+    const allHaveTimestamps = parsed.every((p) => p.timestamp !== null);
+    if (allHaveTimestamps) {
+      parsed.sort((a, b) => a.timestamp - b.timestamp);
+    } else {
+      parsed.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      if (parsed.some((p) => p.timestamp !== null)) {
+        showStatus("Some files lack timestamps. Sorted alphabetically by filename.", "info");
+      }
+    }
+
+    // Assign colors and build combined GeoJSON
+    const combined = { type: "FeatureCollection", features: [] };
+    const dayInfo = [];
+
+    parsed.forEach((entry, i) => {
+      const color = COLORS[i % COLORS.length];
+      const dayNum = i + 1;
+      dayInfo.push({ day: dayNum, name: entry.name, color });
+
+      for (const feature of entry.geojson.features) {
+        // Only include LineString / MultiLineString geometries
+        if (feature.geometry && (feature.geometry.type === "LineString" || feature.geometry.type === "MultiLineString")) {
+          // Strip to just coordinates, keep it lean
+          combined.features.push({
+            type: "Feature",
+            properties: { color, day: dayNum },
+            geometry: {
+              type: feature.geometry.type,
+              coordinates: feature.geometry.coordinates.map(
+                feature.geometry.type === "MultiLineString"
+                  ? (segment) => segment.map(simplifyCoord)
+                  : simplifyCoord
+              ),
+            },
+          });
+        }
+      }
+    });
+
+    if (combined.features.length === 0) {
+      showStatus("No track/route line data found in the uploaded files.", "error");
+      return;
+    }
+
+    // Render
+    showDayList(dayInfo);
+    renderPreviewMap(combined);
+    generateSnippet(combined);
+
+    const sortMethod = allHaveTimestamps ? "by timestamp" : "alphabetically";
+    showStatus(`Loaded ${parsed.length} day${parsed.length > 1 ? "s" : ""}, sorted ${sortMethod}.`, "info");
+    resetBtn.style.display = "inline-block";
+  }
+
+  function extractFirstTimestamp(dom) {
+    const trkpt = dom.querySelector("trkpt");
+    if (!trkpt) return null;
+    const timeEl = trkpt.querySelector("time");
+    if (!timeEl || !timeEl.textContent) return null;
+    const d = new Date(timeEl.textContent);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function simplifyCoord(coord) {
+    // Keep only [lng, lat] (drop elevation if present) and round to 5 decimal places (~1m precision)
+    return [Math.round(coord[0] * 1e5) / 1e5, Math.round(coord[1] * 1e5) / 1e5];
+  }
+
+  // --- Day list ---
+  function showDayList(dayInfo) {
+    dayListEl.innerHTML = "";
+    for (const d of dayInfo) {
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="color-dot" style="background:${d.color}"></span> Day ${d.day}: ${escapeHtml(d.name)}`;
+      dayListEl.appendChild(li);
+    }
+  }
+
+  // --- Preview map ---
+  function renderPreviewMap(geojson) {
+    previewMapEl.style.display = "block";
+
+    if (!previewMap) {
+      previewMap = L.map("preview-map");
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 18,
+      }).addTo(previewMap);
+    }
+
+    // Clear old layers
+    mapLayers.forEach((l) => previewMap.removeLayer(l));
+    mapLayers = [];
+
+    const geoLayer = L.geoJSON(geojson, {
+      style: function (feature) {
+        return { color: feature.properties.color, weight: LINE_WEIGHT, opacity: 0.85 };
+      },
+      onEachFeature: function (feature, layer) {
+        layer.bindTooltip("Day " + feature.properties.day, { sticky: true });
+      },
+    }).addTo(previewMap);
+
+    mapLayers.push(geoLayer);
+    previewMap.fitBounds(geoLayer.getBounds(), { padding: [30, 30] });
+  }
+
+  // --- Snippet generation ---
+  function generateSnippet(geojson) {
+    // Compute bounds for fitBounds in snippet
+    const allCoords = [];
+    for (const f of geojson.features) {
+      const g = f.geometry;
+      if (g.type === "LineString") {
+        for (const c of g.coordinates) allCoords.push([c[1], c[0]]);
+      } else if (g.type === "MultiLineString") {
+        for (const seg of g.coordinates)
+          for (const c of seg) allCoords.push([c[1], c[0]]);
+      }
+    }
+
+    let south = 90, north = -90, west = 180, east = -180;
+    for (const [lat, lng] of allCoords) {
+      if (lat < south) south = lat;
+      if (lat > north) north = lat;
+      if (lng < west) west = lng;
+      if (lng > east) east = lng;
+    }
+
+    const boundsStr = `[[${south.toFixed(5)}, ${west.toFixed(5)}], [${north.toFixed(5)}, ${east.toFixed(5)}]]`;
+
+    // Use a unique-enough map ID to avoid collisions
+    const mapId = "route-map-" + Math.random().toString(36).slice(2, 8);
+
+    const snippet = `<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<div id="${mapId}" style="width: 100%; height: 600px;"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
+<script>
+(function () {
+  var map = L.map("${mapId}");
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: '\\u00a9 <a href=\\"https://www.openstreetmap.org/copyright\\">OpenStreetMap</a> contributors',
+    maxZoom: 18
+  }).addTo(map);
+
+  var routeData = ${JSON.stringify(geojson)};
+
+  L.geoJSON(routeData, {
+    style: function (feature) {
+      return { color: feature.properties.color, weight: ${LINE_WEIGHT}, opacity: 0.85 };
+    },
+    onEachFeature: function (feature, layer) {
+      layer.bindTooltip("Day " + feature.properties.day, { sticky: true });
+    }
+  }).addTo(map);
+
+  map.fitBounds(${boundsStr}, { padding: [20, 20] });
+})();
+<\/script>`;
+
+    snippetEl.value = snippet;
+    outputSection.style.display = "block";
+  }
+
+  // --- Reset ---
+  function resetApp() {
+    // Clear map
+    mapLayers.forEach((l) => previewMap.removeLayer(l));
+    mapLayers = [];
+    previewMapEl.style.display = "none";
+
+    // Clear UI
+    dayListEl.innerHTML = "";
+    statusEl.innerHTML = "";
+    snippetEl.value = "";
+    outputSection.style.display = "none";
+    resetBtn.style.display = "none";
+    fileInput.value = "";
+  }
+
+  // --- Helpers ---
+  function showStatus(msg, type) {
+    statusEl.innerHTML = `<span class="${type}">${escapeHtml(msg)}</span>`;
+  }
+
+  function escapeHtml(s) {
+    const div = document.createElement("div");
+    div.textContent = s;
+    return div.innerHTML;
+  }
+})();
+</script>
+
+</body>
+</html>
